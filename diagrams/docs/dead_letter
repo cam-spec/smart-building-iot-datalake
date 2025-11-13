@@ -1,0 +1,5 @@
+{
+  "ts": "2025-11-13T12:01:24.012Z",
+  "reason": "MISSING_FIELD: room",
+  "raw_message": "{ ... original JSON string ... }"
+}

@@ -1,0 +1,26 @@
+flowchart LR
+  subgraph IoT_Sensors["IoT Sensors (Simulated)"]
+    S1((Temp))
+    S2((Occupancy))
+    S3((Energy))
+  end
+
+  subgraph Kafka["Apache Kafka"]
+    T["Topic: building_sensors | Partition key: building_id | Replication: 3 (conceptual)"]
+  end
+
+  subgraph Consumer["Python Consumer (Stream Processor)"]
+    V["Validate & Enrich (server_ts) | Retries on transient errors"]
+    DLQ["Dead-letter Writer | invalid/missing fields"]
+  end
+
+  subgraph MongoDB["MongoDB (Time-Series)"]
+    RAW["sensor_readings (time-series) | Indexes: time, building_id, room"]
+    DEAD["dead_letter"]
+  end
+
+  S1 --> T
+  S2 --> T
+  S3 --> T
+  T --> V --> RAW
+  V -.-> DLQ
