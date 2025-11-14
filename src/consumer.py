@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 from kafka import KafkaConsumer
 from pymongo import MongoClient
+from dateutil.parser import isoparse   # <-- FIXED: proper ISO timestamp parser
 
 
 def now_iso():
@@ -48,9 +49,9 @@ def validate_event(event: dict):
         elif energy < 0:
             errors.append("energy_w cannot be negative")
 
-    # Timestamp validation
+    # Timestamp validation (FULL FIX)
     try:
-        ts = datetime.fromisoformat(event["device_ts"].replace("Z", ""))
+        ts = isoparse(event["device_ts"])     # <-- Accepts 2025-11-14T10:25:31.123Z
         if ts > datetime.now(timezone.utc):
             errors.append("device_ts is in the future")
     except Exception:
@@ -81,6 +82,7 @@ def main():
             event = msg.value
             errors = validate_event(event)
 
+            # If failed validation → send to dead-letter
             if errors:
                 print("[DEAD LETTER] ", errors)
                 dead.insert_one({
