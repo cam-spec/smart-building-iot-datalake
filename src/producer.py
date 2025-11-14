@@ -1,4 +1,3 @@
-# updated by Laith
 import json
 import random
 import time
