@@ -67,7 +67,7 @@ def main():
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
         auto_offset_reset="earliest",
         enable_auto_commit=True,
-        group_id="smart-building-consumer"
+        group_id="smart-building-consumer-v1"
     )
 
     mongo = MongoClient("mongodb://localhost:27017/")
