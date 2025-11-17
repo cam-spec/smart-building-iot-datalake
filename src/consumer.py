@@ -1,29 +1,44 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
 from kafka import KafkaConsumer
 from pymongo import MongoClient
-from dateutil.parser import isoparse   # <-- FIXED: proper ISO timestamp parser
+from dateutil.parser import isoparse   # proper ISO timestamp parser
 
 
 def now_iso():
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def validate_event(event: dict):
     errors = []
 
     # Required fields
-    required = ["event_id", "device_ts", "sensor_id",
-                "building_id", "floor", "room", "metrics"]
+    required = [
+        "event_id",
+        "device_ts",
+        "sensor_id",
+        "building_id",
+        "floor",
+        "room",
+        "metrics",
+    ]
 
     for field in required:
         if field not in event:
             errors.append(f"Missing field: {field}")
 
+    # If core fields are missing, no point doing deeper checks
+    if errors:
+        return errors
+
     # Metrics checks
     metrics = event.get("metrics", {})
 
-    # Numeric checks
     temp = metrics.get("temperature_c")
     occ = metrics.get("occupancy_count")
     energy = metrics.get("energy_w")
@@ -39,8 +54,9 @@ def validate_event(event: dict):
     if occ is not None:
         if not isinstance(occ, int):
             errors.append("occupancy_count must be integer")
-        if occ < 0:
-            errors.append("occupancy_count cannot be negative")
+        else:
+            if occ < 0:
+                errors.append("occupancy_count cannot be negative")
 
     # Energy
     if energy is not None:
@@ -49,11 +65,11 @@ def validate_event(event: dict):
         elif energy < 0:
             errors.append("energy_w cannot be negative")
 
-    # Timestamp validation (FULL FIX)
+    # Timestamp validation (with small clock skew allowance)
     try:
-        ts = isoparse(event["device_ts"])     # <-- Accepts 2025-11-14T10:25:31.123Z
-        if ts > datetime.now(timezone.utc):
-            errors.append("device_ts is in the future")
+        ts = isoparse(event["device_ts"])  # accepts ISO with Z + millis
+        if ts > datetime.now(timezone.utc) + timedelta(minutes=5):
+            errors.append("device_ts is more than 5 minutes in the future")
     except Exception:
         errors.append("Invalid device_ts format")
 
@@ -67,7 +83,7 @@ def main():
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
         auto_offset_reset="earliest",
         enable_auto_commit=True,
-        group_id="smart-building-consumer-v1"
+        group_id="smart-building-consumer-v1",
     )
 
     mongo = MongoClient("mongodb://localhost:27017/")
@@ -84,17 +100,21 @@ def main():
 
             # If failed validation → send to dead-letter
             if errors:
-                print("[DEAD LETTER] ", errors)
-                dead.insert_one({
-                    "ts": now_iso(),
-                    "errors": errors,
-                    "raw": event
-                })
+                print("[DEAD LETTER]", errors)
+                dead.insert_one(
+                    {
+                        "ts": now_iso(),
+                        "errors": errors,
+                        "raw": event,
+                    }
+                )
                 continue
 
-            # Insert valid event
+            # Store ts as a real datetime in Mongo (better for time-series)
+            ts_parsed = isoparse(event["device_ts"])
+
             doc = {
-                "ts": event["device_ts"],
+                "ts": ts_parsed,
                 "metadata": {
                     "event_id": event["event_id"],
                     "sensor_id": event["sensor_id"],
@@ -102,11 +122,14 @@ def main():
                     "floor": event["floor"],
                     "room": event["room"],
                 },
-                "metrics": event["metrics"]
+                "metrics": event["metrics"],
             }
 
             readings.insert_one(doc)
-            print(f"[CONSUMER] Inserted → {event['building_id']} {event['room']}")
+            print(
+                f"[CONSUMER] Inserted → "
+                f"{event['building_id']} F{event['floor']} {event['room']}"
+            )
 
     except KeyboardInterrupt:
         print("Stopping consumer...")

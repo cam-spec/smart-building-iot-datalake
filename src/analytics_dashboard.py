@@ -47,8 +47,21 @@ def load_sensor_data(limit: int = 5000):
 
     df = pd.DataFrame(rows)
 
-    # Parse timestamps and sort oldest → newest for charts
-    df["ts"] = pd.to_datetime(df["ts"], errors="coerce")
+    # --- FIX: normalise timestamps then parse as UTC ---
+    from datetime import datetime as _dt
+
+    # Convert any datetime / object to ISO string first
+    df["ts"] = df["ts"].apply(
+        lambda v: v.isoformat() if isinstance(v, _dt) else str(v)
+    )
+    # Then let pandas parse them all as tz-aware UTC
+    df["ts"] = pd.to_datetime(df["ts"], utc=True, errors="coerce")
+
+    # Ensure numeric types for charts (defensive)
+    for col in ["temperature_c", "occupancy_count", "energy_w"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Sort oldest → newest for charts
     df = df.sort_values("ts")
     return df
 
